@@ -24,9 +24,9 @@ hArI is an AI-powered document intelligence system that lets you upload PDFs, CS
 |---|---|
 | Language | Python 3.10+ |
 | UI | Streamlit |
-| RAG Pipeline | LangChain + ChromaDB |
+| RAG Pipeline | ChromaDB (cosine similarity) |
 | Embeddings | `sentence-transformers` (`all-MiniLM-L6-v2`) |
-| LLM | Groq API (`llama-4-scout-17b`) |
+| LLM | Groq API (`llama-4-scout-17b`, `compound-beta-mini`) |
 | Data Analysis | Pandas + NumPy |
 | PDF Parsing | PyMuPDF |
 
@@ -181,6 +181,7 @@ All tunable parameters live in `config.py`:
 | `EMBEDDING_MODEL` | Sentence-transformer model name |
 | `LLM_MODEL` | Groq model identifier |
 | `ANALYSIS_MODEL` | Groq model used for pandas code generation |
+| `SCORE_THRESHOLD` | Minimum cosine similarity score for chunk retrieval |
 
 ---
 
@@ -188,7 +189,6 @@ All tunable parameters live in `config.py`:
 
 - PDF support only (no `.docx`, `.txt` currently)
 - CSV/Excel analysis depends on LLM-generated pandas code — complex queries may occasionally fail
-- ChromaDB requires `hnsw:space: cosine` in collection metadata for correct similarity scoring
 
 ---
 
@@ -196,7 +196,7 @@ All tunable parameters live in `config.py`:
 
 - [x] Streaming LLM responses in UI
 - [x] Modular ui/ folder architecture
-- [ ] ChromaDB cosine similarity threshold filtering
+- [x] ChromaDB cosine similarity threshold filtering
 - [ ] Add `.docx` and `.txt` support
 - [ ] Multi-collection support (separate namespaces per session)
 - [ ] Export chat history
@@ -209,5 +209,7 @@ All tunable parameters live in `config.py`:
 MIT License. See `LICENSE` for details.
 
 ---
+
+**Live Demo** → [hArI](https://harichat.streamlit.app)
 
 *Built by [Harsh Bhanushali](https://github.com/harshbhanushali26)*

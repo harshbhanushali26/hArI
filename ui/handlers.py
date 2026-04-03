@@ -33,7 +33,7 @@ from rag.retriever import RAGRetriever
 from ui.state import clear_chat
 
 
-from config import GROQ_API_KEY, ANALYSIS_MODEL
+from config import GROQ_API_KEY, ANALYSIS_MODEL, SCORE_THRESHOLD
 
 
 def ingest_file(file):
@@ -124,7 +124,15 @@ def run_pdf_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     Returns (response_string, sources_string)
     """
     # retrieve top-k chunks
-    chunks = st.session_state.retriever.retrieve(query)
+    chunks = st.session_state.retriever.retrieve(query, score_threshold=SCORE_THRESHOLD)
+
+    # early return if no relevant chunks found
+    if not chunks:
+        return (
+            "I couldn't find anything relevant to that in the uploaded document. "
+            "Try rephrasing your question or ask something specific about the document.",
+            None
+        )
 
     # build sources citation string for UI
     sources = ""

@@ -65,7 +65,10 @@ class VectorStore:
 
             self.collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"description": "Document embeddings for hArI RAG"}
+                metadata={
+                    "description": "Document embeddings for hArI RAG",
+                    "hnsw:space": "cosine"
+                    }
             )
 
         except Exception as e:
