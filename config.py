@@ -57,6 +57,3 @@ MAX_FILES_UPLOAD     = 4
 SUPPORTED_EXTENSIONS = [".pdf", ".csv", ".xlsx", ".xls"]
 
 
-# ── ChromaDB ──────────────────────────────────────────────────────────────────
-CHROMA_PERSIST_DIR     = "data/chroma_store"
-CHROMA_COLLECTION_NAME = "hari_docs"
