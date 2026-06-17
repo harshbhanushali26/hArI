@@ -35,6 +35,7 @@ Internal:
 """
 
 import fitz
+import pymupdf4llm
 import pandas as pd
 from config import SUPPORTED_EXTENSIONS
 from core.utils import get_file_extension
@@ -119,14 +120,13 @@ def load_file(file) -> dict:
             "metadata"  : meta
         }
 
+
 # ── PDF Loader ────────────────────────────────────────────────────────────────
 
 def load_pdf_file(file) -> list[Document]:
     """
-    Loads PDF directly from memory using PyMuPDF (fitz).
-    No tempfile needed — reads from byte stream.
-    Returns list of Document objects, one per page.
-    Skips blank or image-only pages.
+    Loads PDF directly from memory using PyMuPDF.
+    Uses pymupdf4llm to extract high-quality Markdown, preserving tables and lists perfectly.
     """
     file.seek(0)
     file_bytes = file.read()
@@ -135,8 +135,14 @@ def load_pdf_file(file) -> list[Document]:
     try:
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             total_pages = doc.page_count
-            for page_num, page in enumerate(doc):
-                text = page.get_text("text")
+            
+            # MAGICAL EXTRACTION: Converts the entire PDF into structured Markdown per page!
+            md_pages = pymupdf4llm.to_markdown(doc, page_chunks=True)
+            
+            for i, chunk in enumerate(md_pages):
+                text = chunk.get("text", "")
+
+                page_num = i + 1
 
                 if not text.strip():
                     continue  # skip blank / image-only pages
@@ -146,7 +152,7 @@ def load_pdf_file(file) -> list[Document]:
                     metadata={
                         "source"      : file.name,
                         "filename"    : file.name,
-                        "page"        : page_num + 1,
+                        "page"        : page_num,
                         "total_pages" : total_pages,
                         "file_type"   : "pdf"
                     }
@@ -159,6 +165,7 @@ def load_pdf_file(file) -> list[Document]:
         raise ValueError(f"No extractable text in '{file.name}'. File may be scanned or image-based.")
 
     return documents
+
 
 # ── CSV Loader ────────────────────────────────────────────────────────────────
 
@@ -216,13 +223,16 @@ def _build_df_metadata(df: pd.DataFrame, filename: str, file_type: str, file_siz
     Builds metadata dict from DataFrame.
     preview of first 3 rows used later in CSV system prompt for LLM context.
     """
+
+    clean_dtypes = {str(col): str(dtype) for col, dtype in df.dtypes.items()}
+
     return {
         "source"    : filename,
         "file_type" : file_type,
         "file_size" : file_size,
         "rows"      : len(df),
         "columns"   : list(df.columns),
-        "dtypes"    : df.dtypes.astype(str).to_dict(),
+        "dtypes"    : clean_dtypes,
         "preview"   : df.head(3).to_dict(orient="records")
     }
 

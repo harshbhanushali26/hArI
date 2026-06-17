@@ -30,6 +30,7 @@ INTENT_MODEL   = "compound-beta-mini"                        # fast classifier �
 ANALYSIS_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" # CSV pandas code gen — clean output
 RESPONSE_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" # PDF RAG response — no thinking noise
 SUMMARY_MODEL  = "compound-beta-mini"                        # memory compression (simple task)
+TITLE_MODEL = "llama-3.1-8b-instant"                         # fast, cheap — just for 4-5 word titles
 
 
 # ── Embedding ─────────────────────────────────────────────────────────────────

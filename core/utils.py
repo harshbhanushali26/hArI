@@ -19,9 +19,29 @@ Public API:
     get_file_extension(file) -> str
 """
 
+import os
+import streamlit as st
+from supabase import create_client, Client, ClientOptions
 from pathlib import Path
 from groq import Groq
 from config import GROQ_API_KEY
+
+
+def get_supabase_client() -> Client:
+    """Returns a Supabase client with the user's JWT injected directly into headers."""
+    url = st.secrets.get("SUPABASE_URL") or os.environ.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY") or os.environ.get("SUPABASE_KEY")
+    
+    if not url or not key:
+        raise ValueError("Supabase credentials missing.")
+    
+    # If the user is logged in, forcefully attach their identity to all DB requests
+    if "access_token" in st.session_state:
+        options = ClientOptions(headers={"Authorization": f"Bearer {st.session_state['access_token']}"})
+        return create_client(url, key, options=options)
+    
+    # Otherwise return a generic client (for the login screen itself)
+    return create_client(url, key)
 
 
 def get_groq_client() -> Groq:

@@ -36,14 +36,15 @@ Pipeline Flow:
 import streamlit as st
 from ui.styles import inject_styles
 from ui.state import init_session_state
-from ui.components import render_header, render_status_bar, render_suggestion_pills, render_upload_section, render_file_list, render_chat_input, render_chat_history, render_action_buttons
+from ui.auth import render_auth_ui
+from ui.components import render_header, render_status_bar, render_upload_section, render_file_list, render_chat_input, render_chat_history, render_action_buttons,  render_chat_history_sidebar
 
 
 st.set_page_config(
     page_title="hArI",
-    page_icon="🤖◈",
+    page_icon="📄",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 
@@ -53,8 +54,15 @@ def main():
     inject_styles()
     init_session_state()
 
+    # --- THE BOUNCER ---
+    # Check if a user is stored in session state
+    if "user" not in st.session_state or st.session_state["user"] is None:
+        render_auth_ui()
+        return  # Stop executing the rest of the app!
+    # --- MAIN APP (Only runs if logged in) ---
+
+    render_chat_history_sidebar()
     render_header()
-    render_suggestion_pills()
     render_upload_section()
     render_file_list()
     render_status_bar()

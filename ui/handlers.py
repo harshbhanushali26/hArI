@@ -33,7 +33,7 @@ from rag.retriever import RAGRetriever
 from ui.state import clear_chat
 
 
-from config import GROQ_API_KEY, ANALYSIS_MODEL, SCORE_THRESHOLD
+from config import GROQ_API_KEY, ANALYSIS_MODEL, SCORE_THRESHOLD, TITLE_MODEL
 
 
 def ingest_file(file):
@@ -75,49 +75,6 @@ def ingest_file(file):
         st.error(f"Failed to index {file.name}: {e}")
 
 
-def handle_query(query: str, placeholder=None):
-    """
-    Handles a user query end-to-end.
-    1. Add user message to memory + chat history
-    2. Check if memory needs summarization
-    3. Detect intent (pdf or csv)
-    4. Run correct pipeline
-    5. Add AI response to memory + chat history
-    """
-    # add user message
-    add_message("user", query)
-    st.session_state.chat_history.append({
-        "role"   : "user",
-        "content": query
-    })
-
-    # check memory summarization
-    if should_summarize():
-        with st.spinner("Compressing memory..."):
-            summary = summarize()
-            trim_buffer(summary)
-
-    # detect intent
-    intent = get_intent(
-        st.session_state.uploaded_files,
-        query
-    )
-
-    # run correct pipeline
-    if intent == "pdf":
-        response, sources = run_pdf_pipeline(query, placeholder)
-    else:
-        response, sources = run_csv_pipeline(query, placeholder)
-
-    # add AI response to memory + chat history
-    add_message("assistant", response)
-    st.session_state.chat_history.append({
-        "role"   : "assistant",
-        "content": response,
-        "sources": sources
-    })
-
-
 def run_pdf_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     """
     Runs RAG retrieval for PDF queries.
@@ -134,18 +91,6 @@ def run_pdf_pipeline(query: str, placeholder=None) -> tuple[str, str]:
             None
         )
 
-    # build sources citation string for UI
-    sources = ""
-    if chunks:
-        seen = []
-        for c in chunks:
-            src  = c["metadata"].get("source", "")
-            page = c["metadata"].get("page", "")
-            ref  = f"{src} · p{page}"
-            if ref not in seen:
-                seen.append(ref)
-        sources = "  |  ".join(seen)
-
     # get LLM response
     response = get_response(
         query    = query,
@@ -157,94 +102,7 @@ def run_pdf_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     )
 
     response = strip_thinking(response)
-    return response, sources
-
-
-def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
-    """
-    Runs pandas analysis for CSV/Excel queries.
-    1. Build pandas code via Groq
-    2. Execute safely
-    3. Pass result to LLM for formatting
-    Returns (response_string, sources_string)
-    """
-    if not st.session_state.dataframes:
-        return "No CSV or Excel file loaded in this session.", ""
-
-    # use first available dataframe (or detected one)
-    fname    = list(st.session_state.dataframes.keys())[0]
-    df, meta = st.session_state.dataframes[fname]
-
-    # build schema string for code gen prompt
-    schema = "\n".join(
-        f"  - {col}: {meta['dtypes'].get(col, '?')}"
-        for col in meta["columns"]
-    )
-    preview = str(df.head(3).to_dict(orient="records"))
-
-    # ask Groq to generate pandas code
-    code_prompt = (
-        f"You are a pandas expert. Write Python code to answer this query.\n"
-        f"DataFrame variable name is 'df'.\n"
-        f"Schema:\n{schema}\n"
-        f"Preview:\n{preview}\n\n"
-        f"Query: {query}\n\n"
-        f"Rules:\n"
-        f"- Use only pandas and numpy\n"
-        f"- Store final result in a variable called 'result'\n"
-        f"- result must be a string, number, or DataFrame\n"
-        f"- No imports needed, df is already loaded\n"
-        f"- Return ONLY the Python code, no explanation"
-    )
-
-    try:
-        client   = Groq(api_key=GROQ_API_KEY)
-        code_res = client.chat.completions.create(
-            model    = ANALYSIS_MODEL,
-            messages = [{"role": "user", "content": code_prompt}],
-            max_tokens = 500
-        )
-        code = code_res.choices[0].message.content.strip()
-
-        # strip markdown code fences + thinking tags robustly
-        import re
-        code = re.sub(r"<think>.*?</think>", "", code, flags=re.DOTALL).strip()
-        code = re.sub(r"^```[\w]*\n?", "", code).strip()
-        code = re.sub(r"\n?```$", "", code).strip()
-
-        # safe execution — only pandas/numpy allowed
-        safe_globals = {"df": df, "__builtins__": {}}
-        try:
-            import pandas as pd
-            import numpy as np
-            safe_globals["pd"] = pd
-            safe_globals["np"] = np
-            exec(code, safe_globals)
-            analysis_result = str(safe_globals.get("result", "No result produced."))
-        except Exception as exec_err:
-            analysis_result = f"Execution error: {exec_err}\nGenerated code:\n{code}"
-
-    except Exception as e:
-        analysis_result = f"Code generation failed: {e}"
-
-    # pass result to LLM for final formatting
-    context = {
-        "metadata"       : meta,
-        "analysis_result": analysis_result
-    }
-
-    response = get_response(
-        query    = query,
-        intent   = "csv",
-        context  = context,
-        memory   = get_context(),
-        sections = st.session_state.prompt_sections,
-        placeholder = placeholder
-    )
-
-    response = strip_thinking(response)
-    sources = f"{fname} · {meta['rows']} rows"
-    return response, sources
+    return response, chunks
 
 
 def reset_session():
@@ -273,4 +131,209 @@ def remove_file(filename: str):
 
     if not st.session_state.uploaded_files:
         st.session_state.session_ready = False
+
+
+def handle_query(query: str, placeholder=None):
+    """
+    Handles a user query end-to-end and saves it to the Supabase database.
+    """
+
+    from core.utils import get_supabase_client
+    supabase = get_supabase_client()
+    user_id = st.session_state["user"].id
+
+    # --- 1. CREATE A SESSION IF NEEDED ---
+    if st.session_state.current_session_id is None:
+        # Create a title based on the first few words of the query
+        title = _generate_chat_title(query)
+
+        # Insert new session into database
+        try:
+            # Try to insert new session
+            response = supabase.table("chat_sessions").insert({
+                "user_id": user_id,
+                "title": title
+            }).execute()
+            st.session_state.current_session_id = response.data[0]["id"]
+            
+        except Exception as e:
+            # Force Streamlit to show us the error!
+            st.error(f"🚨 DATABASE ERROR: {e}")
+            st.stop()
+            return  # Stop the code here so it doesn't refresh!
+
+    session_id = st.session_state.current_session_id
+
+    # --- 2. SAVE USER MESSAGE ---
+    try:
+        supabase.table("messages").insert({
+            "session_id": session_id,
+            "role": "user",
+            "content": query
+        }).execute()
+    except Exception as e:
+        st.error(f"🚨 MESSAGE SAVE ERROR: {e}")
+        st.stop()
+        return
+    add_message("user", query)
+    st.session_state.chat_history.append({
+        "role"   : "user",
+        "content": query
+    })
+
+    # --- 3. RUN THE PIPELINE ---
+    if should_summarize():
+        with st.spinner("Compressing memory..."):
+            summary = summarize()
+            trim_buffer(summary)
+
+    intent = get_intent(st.session_state.uploaded_files, query)
+
+    if intent == "pdf":
+        response_text, sources = run_pdf_pipeline(query, placeholder)
+    else:
+        response_text, sources = run_csv_pipeline(query, placeholder)
+
+    # --- 4. SAVE AI RESPONSE ---
+    supabase.table("messages").insert({
+        "session_id": session_id,
+        "role": "assistant",
+        "content": response_text
+    }).execute()
+    add_message("assistant", response_text)
+    st.session_state.chat_history.append({
+        "role"   : "assistant",
+        "content": response_text,
+        "sources": sources
+    })
+
+
+def _generate_chat_title(query: str) -> str:
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        response = client.chat.completions.create(
+            model=TITLE_MODEL,
+            messages=[{
+                "role": "user",
+                "content": f"Give a 4-5 word title for a conversation starting with: '{query}'. Return ONLY the title, no quotes, no punctuation."
+            }],
+            max_tokens=15,
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
+    except:
+        return query[:30] + "..." if len(query) > 30 else query
+
+
+def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
+    """
+    Runs explicitly-registered DuckDB SQL analysis for CSV/Excel queries.
+    Supports MULTIPLE files for cross-table JOINs!
+    """
+    import duckdb
+    import re
+    from groq import Groq
+    
+    if not st.session_state.dataframes:
+        return "No CSV or Excel file loaded in this session.", ""
+
+    # 1. Open an explicit connection
+    con = duckdb.connect()
+
+    # 2. Register EVERY loaded file as its own table for cross-file JOINs!
+    schema_parts = []
+    file_names = []
+    
+    for raw_fname, (df, meta) in st.session_state.dataframes.items():
+        # Sanitize filename into a valid SQL table name (e.g. "my data.csv" -> "my_data_csv")
+        table_name = re.sub(r'\W|^(?=\d)', '_', raw_fname).lower()
+        file_names.append(f"{raw_fname} ({meta['rows']} rows)")
+        
+        # Explicitly register the DataFrame into the connection
+        con.register(table_name, df)
+        
+        # Build schema block for this specific table
+        table_schema = f"Table Name: {table_name}\nColumns:\n"
+        table_schema += "\n".join(f"  - {col}: {meta['dtypes'].get(col, '?')}" for col in meta["columns"])
+        schema_parts.append(table_schema)
+
+    combined_schema = "\n\n".join(schema_parts)
+    client = Groq(api_key=GROQ_API_KEY)
+    
+    max_retries = 3
+    sql_query = ""
+    analysis_result = ""
+    
+    # The Prompt now dynamically supports multiple tables
+    messages = [
+        {"role": "system", "content": "You are a senior PostgreSQL and DuckDB expert."},
+        {"role": "user", "content": (
+            f"Write a SQL query to answer this request.\n\n"
+            f"Available Tables & Schemas:\n{combined_schema}\n\n"
+            f"Request: {query}\n\n"
+            f"Rules:\n"
+            f"- Return ONLY the raw SQL query\n"
+            f"- Do NOT wrap it in markdown block quotes\n"
+            f"- Do NOT add any explanations."
+        )}
+    ]
+
+    for attempt in range(max_retries):
+        try:
+            sql_res = client.chat.completions.create(
+                model    = ANALYSIS_MODEL,
+                messages = messages,
+                max_tokens = 500,
+                temperature = 0.1
+            )
+            sql_query = sql_res.choices[0].message.content.strip()
+
+            sql_query = re.sub(r"<think>.*?</think>", "", sql_query, flags=re.DOTALL).strip()
+            sql_query = re.sub(r"^```[sS][qQ][lL]?\n?", "", sql_query).strip()
+            sql_query = re.sub(r"\n?```$", "", sql_query).strip()
+
+            # 3. Execute explicitly against our managed connection
+            result_df = con.execute(sql_query).df()
+            analysis_result = result_df.to_string()
+            break
+            
+        except Exception as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                # Self-heal loop
+                messages.append({"role": "assistant", "content": sql_query})
+                messages.append({"role": "user", "content": f"That SQL failed with this error: {error_msg}\nFix the SQL and return ONLY the corrected SQL query."})
+            else:
+                analysis_result = f"Failed to run SQL after {max_retries} attempts.\nLast Error: {error_msg}\nLast SQL: {sql_query}"
+
+    # Close the connection to free memory
+    con.close()
+
+    # Pass result to LLM for final formatting
+    # Note: We just pass the first file's meta for basic context, but analysis_result is what matters
+    first_fname = list(st.session_state.dataframes.keys())[0]
+    _, first_meta = st.session_state.dataframes[first_fname]
+    
+    context = {
+        "metadata"       : first_meta,
+        "analysis_result": analysis_result
+    }
+
+    from core.responser import get_response
+    response = get_response(
+        query    = query,
+        intent   = "csv",
+        context  = context,
+        memory   = get_context(),
+        sections = st.session_state.prompt_sections,
+        placeholder = placeholder
+    )
+
+    from core.utils import strip_thinking
+    response = strip_thinking(response)
+    
+    # Sources now shows all files that were queried!
+    sources = " | ".join(file_names)
+    return response, sources
+
 

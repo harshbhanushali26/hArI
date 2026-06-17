@@ -22,6 +22,8 @@ def init_session_state():
 
     if "uploaded_files"  not in st.session_state:
         st.session_state.uploaded_files     = []
+    if "current_session_id" not in st.session_state:
+        st.session_state.current_session_id = None
     if "processed_files" not in st.session_state:
         st.session_state.processed_files    = set()
     if "dataframes"      not in st.session_state:

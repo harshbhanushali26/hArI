@@ -1,0 +1,15 @@
+[theme]
+# The main accent color (spinners, primary buttons, highlights)
+primaryColor = "#7F77DD"
+
+# The main background color for the main chat window
+backgroundColor = "#0a0a0a"
+
+# The background color specifically for the SIDEBAR and forms! (Stitch style navy)
+secondaryBackgroundColor = "#12151e"
+
+# The default text color for the entire app
+textColor = "#c8c8c8"
+
+# The global font family
+font = "monospace"
