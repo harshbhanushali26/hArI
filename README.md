@@ -1,215 +1,118 @@
-# hArI — Document Intelligence System
+# hArI v2 — Document Intelligence System
 
 > *Talk to your documents. Understand your data.*
 
-hArI is an AI-powered document intelligence system that lets you upload PDFs, CSVs, and Excel files — then have a natural conversation with their contents. It uses a RAG (Retrieval-Augmented Generation) pipeline for PDF semantic search and LLM-driven pandas code execution for structured data analysis.
+![hArI PDF Mode](assets/main-page-pdf.png)
+![hArI CSV Mode](assets/main-page-csv.png)
+
+hArI is a next-generation AI document intelligence system. Evolving far beyond a standard RAG prototype, hArI v2 features a completely re-engineered architecture. It utilizes **Hybrid Search (Semantic + Keyword)** for perfect PDF retrieval, and an embedded **DuckDB SQL Engine**, secure, multi-table CSV analytics.
 
 ---
 
-## Features
+## 🔥 What's New in v2 
 
-- **PDF Chat** — Semantic search over PDF content using ChromaDB + sentence-transformers
-- **CSV / Excel Analysis** — Natural language queries converted to pandas operations via LLM
-- **Mixed File Mode** — Upload both types together; hArI automatically routes each query to the right engine
-- **Streaming Responses** — Token-by-token streaming with live cursor effect (ChatGPT-style)
-- **Conversation Memory** — Maintains context across turns; summarizes older messages when the context window fills up
-- **Persistent Vector Store** — PDF embeddings stored across sessions; no re-processing on reload
-- **Modular Architecture** — Clean separation of UI, state, handlers, and core logic
+- **DuckDB Analytics Engine** — The insecure Pandas `exec()` approach has been completely removed. CSVs are now securely registered into an in-memory DuckDB connection, allowing Groq to generate and execute pure, safe PostgreSQL.
+- **Multi-CSV JOINs** — Upload multiple CSVs simultaneously. hArI will dynamically register all of them into DuckDB, allowing the AI to write complex SQL `JOIN` queries across completely different files.
+- **Hybrid Search (`pgvector` + `tsvector`)** — Pure semantic search is dead. hArI now uses a custom Supabase RPC function that mathematically combines vector similarity with exact keyword matching (`ts_rank`). This guarantees significantly reduces hallucination on keyword-heavy queries when searching for highly specific IDs, names, or acronyms.
+- **Flawless Markdown Extraction** — PyMuPDF has been upgraded with `pymupdf4llm`. hArI now extracts perfect Markdown from PDFs, perfectly preserving academic tables, headers, and lists for the LLM to read.
+- **Citation UI** — Trust, but verify. Every AI answer now includes an interactive drop-down expander showing the exact raw Markdown paragraph retrieved from the database.
+- **Production Telemetry** — A built-in 👍/👎 feedback widget logs user satisfaction and queries directly to Supabase for continuous LLM evaluation.
+- **Premium UI Aesthetic** — A completely redesigned, premium dark-navy UI tailored via `.streamlit/config.toml` and custom CSS injections.
 
 ---
 
-## Tech Stack
+## 🛠️ Technology Stack
 
-| Layer | Technology |
+| Component | Technology |
 |---|---|
-| Language | Python 3.10+ |
-| UI | Streamlit |
-| RAG Pipeline | ChromaDB (cosine similarity) |
-| Embeddings | `sentence-transformers` (`all-MiniLM-L6-v2`) |
-| LLM | Groq API (`llama-4-scout-17b`, `compound-beta-mini`) |
-| Data Analysis | Pandas + NumPy |
-| PDF Parsing | PyMuPDF |
+| **Frontend UI** | Streamlit (Custom Themed) |
+| **Database** | PostgreSQL (Supabase) |
+| **Authentication**| Supabase Auth (Email / Magic Link) |
+| **Vector Engine** | `pgvector` + `tsvector` (Hybrid Search) |
+| **SQL Engine** | DuckDB (In-Memory) |
+| **LLM Reasoning** | Groq API (`meta-llama/llama-4-scout-17b-16e-instruct`, `compound-beta-mini`, `llama-3.1-8b-instant`) |
+| **PDF Extraction** | `pymupdf4llm` (High-fidelity Markdown) |
+| **Embeddings** | `sentence-transformers` (`all-MiniLM-L6-v2`) |
 
 ---
 
-## Project Structure
+## 🏗️ Architecture Flow
 
+### PDF Pipeline (Hybrid RAG)
+
+```mermaid
+graph TD
+    User([User]) -->|1. Uploads PDF| App[Streamlit UI]
+    App -->|2. Extracts Markdown| Extractor[PyMuPDF4LLM]
+    Extractor -->|3. Chunks & Embeds| VectorDB[(Supabase pgvector)]
+    
+    User -->|4. Asks Question| App
+    App -->|5. RPC: hybrid_search| VectorDB
+    VectorDB -->|6. Returns Top Matches| LLM[Groq API]
+    LLM -->|7. Injects Context & Reasons| App
+    App -->|8. Streams Output + Citations| User
 ```
-hArI/
-├── app.py                  # Entry point — page config + render orchestration
-├── config.py               # All config constants (models, chunking, RAG, memory, limits)
-│
-├── core/
-│   ├── __init__.py         
-│   ├── file_processor.py   # File loading, type detection, PDF/CSV/Excel parsing
-│   ├── memory.py           # Conversation context + summarization logic
-│   ├── query_intent.py     # Query classifier — routes to PDF (RAG) or CSV engine
-│   ├── responser.py        # Prompt builder + streaming Groq response handler
-│   └── utils.py            # Shared utilities (strip_thinking, Groq client helpers)
-│
-├── rag/
-│   ├── __init__.py         
-│   ├── embedder.py         # Splits docs into chunks, generates embeddings
-│   ├── retriever.py        # Embeds user query, retrieves top-k chunks from ChromaDB
-│   └── vector_store.py     # ChromaDB client, collection management, deduplication
-│
-├── ui/
-│   ├── __init__.py         
-│   ├── styles.py           # Global CSS injection (dark theme, purple accents)
-│   ├── state.py            # Session state init + clear_chat()
-│   ├── handlers.py         # Ingest, query, reset, remove file pipelines
-│   └── components.py       # All Streamlit render functions
-│
-├── prompts/
-│   └── system_prompt.md    # AI identity + mode-specific rules (PDF, CSV, General)
-│
-├── data/
-│   └── chroma_store/       # Persistent ChromaDB vector storage
-│
-├── .env                    # API keys (not committed)
-├── pyproject.toml
-└── uv.lock
+
+### CSV Pipeline (Self-Healing SQL)
+
+```mermaid
+graph TD
+    User([User]) -->|1. Uploads CSVs| App[Streamlit UI]
+    App -->|2. Registers Tables| DuckDB[(DuckDB In-Memory)]
+    
+    User -->|3. Asks Data Question| App
+    App -->|4. Sends Schema + Query| LLM[Groq API]
+    
+    LLM -->|5. Generates PostgreSQL| DuckDB
+    
+    DuckDB -->|6. Evaluates SQL| ErrorCheck{Syntax Error?}
+    ErrorCheck -->|Yes| LLM
+    ErrorCheck -->|No| Result[DataFrame Result]
+    
+    Result -->|7. Passed back as context| LLM
+    LLM -->|8. Formats Final Answer| App
 ```
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
 ### Prerequisites
-
 - Python 3.10+
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
 - A [Groq API key](https://console.groq.com/)
+- A [Supabase](https://supabase.com/) Project (for Postgres + Auth + pgvector)
 
 ### Installation
-
 ```bash
-# Clone the repo
-git clone https://github.com/yourusername/hArI.git
+git clone https://github.com/harshbhanushali26/hArI.git
 cd hArI
 
-# Install dependencies using uv
-uv sync
-
-# Or using pip
+# Install dependencies (DuckDB, PyMuPDF4LLM, Supabase, etc.)
 pip install -r requirements.txt
 ```
 
 ### Environment Setup
-
 Create a `.env` file in the project root:
-
 ```env
-GROQ_API_KEY=your_groq_api_key_here
+GROQ_API_KEY=your_groq_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_anon_key
 ```
 
-### Run
+### 🔐 Authentication & Database Setup
+1. **Database Tables:** You must run the provided SQL scripts in your Supabase SQL Editor to initialize the `documents`, `chat_sessions`, `messages`, and `telemetry` tables, as well as the custom `hybrid_search` RPC function.
+2. **Email Verification:** By default, Supabase requires **Email Verification** for new accounts. When a user clicks "Sign Up" in the hArI app, they **will not** be able to log in immediately. They must check their inbox for a verification email or Magic Link from Supabase and click it first. *(You can disable "Confirm Email" in the Supabase Dashboard -> Authentication -> Providers -> Email if you want instant login during development).*
 
+### Run
 ```bash
 streamlit run app.py
 ```
 
 ---
 
-## How It Works
-
-### PDF Mode (RAG Pipeline)
-
-```
-Upload PDF
-    │
-    ▼
-PyMuPDF extracts text
-    │
-    ▼
-Text split into chunks (embedder.py)
-    │
-    ▼
-Embeddings generated (all-MiniLM-L6-v2)
-    │
-    ▼
-Stored in ChromaDB (vector_store.py)
-    │
-    ▼
-User query → embed → retrieve top-k chunks (retriever.py)
-    │
-    ▼
-Chunks + memory context injected into prompt (responser.py)
-    │
-    ▼
-Groq streams answer token-by-token → rendered live in UI
-```
-
-### CSV / Excel Mode (Direct LLM)
-
-```
-Upload CSV / Excel
-    │
-    ▼
-Pandas DataFrame created (file_processor.py)
-    │
-    ▼
-Schema + sample rows extracted as metadata
-    │
-    ▼
-User query + schema → Groq generates pandas code
-    │
-    ▼
-Code executed safely → result passed back to LLM
-    │
-    ▼
-Groq streams formatted answer → rendered live in UI
-```
-
-### Mixed Mode
-
-When both file types are present, `query_intent.py` uses the LLM to classify whether each query is best answered by the PDF RAG engine or the CSV analysis engine — then routes accordingly.
+## 📊 Telemetry & Evaluation
+The system is now wired for production telemetry. User feedback (Thumbs Up/Down) is logged directly to the `telemetry` table in Supabase. The next phase of development includes a standalone `eval.py` script utilizing the **RAGAS** framework to mathematically score hArI's Context Precision and Faithfulness using a Golden Dataset.
 
 ---
 
-## Configuration
-
-All tunable parameters live in `config.py`:
-
-| Parameter | Description |
-|---|---|
-| `CHUNK_SIZE` | Token size per text chunk for PDF splitting |
-| `CHUNK_OVERLAP` | Overlap between consecutive chunks |
-| `TOP_K_RESULTS` | Number of chunks retrieved per query |
-| `MEMORY_BUFFER_SIZE` | Max messages before summarization triggers |
-| `MAX_FILE_SIZE_MB` | Upload size limit per file |
-| `EMBEDDING_MODEL` | Sentence-transformer model name |
-| `LLM_MODEL` | Groq model identifier |
-| `ANALYSIS_MODEL` | Groq model used for pandas code generation |
-| `SCORE_THRESHOLD` | Minimum cosine similarity score for chunk retrieval |
-
----
-
-## Known Limitations
-
-- PDF support only (no `.docx`, `.txt` currently)
-- CSV/Excel analysis depends on LLM-generated pandas code — complex queries may occasionally fail
-
----
-
-## Roadmap
-
-- [x] Streaming LLM responses in UI
-- [x] Modular ui/ folder architecture
-- [x] ChromaDB cosine similarity threshold filtering
-- [ ] Add `.docx` and `.txt` support
-- [ ] Multi-collection support (separate namespaces per session)
-- [ ] Export chat history
-- [ ] Confidence score display on retrieved chunks
-
----
-
-## License
-
-MIT License. See `LICENSE` for details.
-
----
-
-**Live Demo** → [hArI](https://harichat.streamlit.app)
-
-*Built by [Harsh Bhanushali](https://github.com/harshbhanushali26)*
+**Built by [Harsh Bhanushali](https://github.com/harshbhanushali26)**
