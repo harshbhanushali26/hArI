@@ -31,8 +31,8 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
-CHUNK_SIZE    = 600
-CHUNK_OVERLAP = 75
+CHUNK_SIZE    = 1000
+CHUNK_OVERLAP = 150
 
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
