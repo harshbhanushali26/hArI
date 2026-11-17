@@ -14,23 +14,16 @@ load_dotenv()
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+# GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
-# Available models on Groq:
-# "qwen/qwen3-32b"
-# "groq/compound-beta"
-# "groq/compound-beta-mini"
-# "openai/gpt-oss-120b"
-# "openai/gpt-oss-20b"
-# "meta-llama/llama-4-scout-17b-16e-instruct"
-
-INTENT_MODEL   = "compound-beta-mini"                        # fast classifier — pdf or csv
-ANALYSIS_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" # CSV pandas code gen — clean output
-RESPONSE_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" # PDF RAG response — no thinking noise
-SUMMARY_MODEL  = "compound-beta-mini"                        # memory compression (simple task)
-TITLE_MODEL = "llama-3.1-8b-instant"                         # fast, cheap — just for 4-5 word titles
+INTENT_MODEL   = "openai/gpt-oss-20b"                        # fast classifier — pdf or csv
+ANALYSIS_MODEL = "openai/gpt-oss-120b"                       # SQL generation for DuckDB
+RESPONSE_MODEL = "openai/gpt-oss-120b"                       # Grounded response generation
+SUMMARY_MODEL  = "openai/gpt-oss-20b"                        # Memory compression
+TITLE_MODEL    = "openai/gpt-oss-20b"                        # Chat session titling
 
 
 # ── Embedding ─────────────────────────────────────────────────────────────────
@@ -44,7 +37,7 @@ CHUNK_OVERLAP = 75
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 TOP_K = 5
-SCORE_THRESHOLD = 0.35
+# SCORE_THRESHOLD = 0.35
 
 
 # ── Memory ────────────────────────────────────────────────────────────────────

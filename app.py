@@ -29,7 +29,7 @@ Pipeline Flow:
         -> st.session_state.dataframes [CSV/Excel]
 
     Query:
-        get_intent() -> retrieve() [PDF] or pandas exec [CSV]
+        get_intent() -> retrieve() [PDF] or DuckDB SQL [CSV]
         -> get_response() -> add_message() -> display
 """
 

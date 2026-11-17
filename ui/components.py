@@ -83,7 +83,8 @@ def render_chat_history():
 
     st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
 
-    for msg in st.session_state.chat_history:
+    # ── REPLACE lines 86–164 in ui/components.py ──
+    for idx, msg in enumerate(st.session_state.chat_history):
         if msg["role"] == "user":
             st.markdown(f"""
                 <div style="display:flex; justify-content:flex-end; margin-bottom:12px">
@@ -114,23 +115,6 @@ def render_chat_history():
             with content_col:
                 st.markdown(msg["content"])
 
-            # if msg.get("sources"):
-            #     raw_sources = msg["sources"]
-            #     seen_files  = []
-            #     unique_refs = []
-            #     for ref in raw_sources.split("  |  "):
-            #         fname = ref.split(" · ")[0].strip()
-            #         if fname not in seen_files:
-            #             seen_files.append(fname)
-            #             unique_refs.append(ref.strip())
-            #     clean_sources = "  |  ".join(unique_refs)
-            #     st.markdown(f"""
-            #         <div style="font-size:10px; color:#7F77DD; margin-bottom:12px;
-            #                     margin-left:32px; font-family:monospace">
-            #             ↳ {html.escape(clean_sources)}
-            #         </div>
-            #     """, unsafe_allow_html=True)
-
             if msg.get("sources"):
                 sources_data = msg["sources"]
                 
@@ -138,12 +122,10 @@ def render_chat_history():
                 if isinstance(sources_data, list):
                     with st.expander("📚 View Retrieved Sources", expanded=False):
                         for i, chunk in enumerate(sources_data):
-                            # Get the page number and filename
                             page = chunk.get("metadata", {}).get("page", "?")
                             fname = chunk.get("metadata", {}).get("filename", "Document")
                             
                             st.markdown(f"**Source {i+1}** · {fname} (Page {page})")
-                            # Show the actual markdown text that Groq read!
                             st.info(chunk.get("content", ""))
                             if i < len(sources_data) - 1:
                                 st.divider()
@@ -159,17 +141,11 @@ def render_chat_history():
 
             # Add Feedback Widget below Assistant Responses
             if msg["role"] == "assistant":
-                # Get the index of this message to create a unique key
-                idx = st.session_state.chat_history.index(msg)
-                
-                # The callback that runs the millisecond a user clicks a thumb!
+                # Callback that runs when user clicks thumbs up or down
                 def log_feedback(message_idx):
                     val = st.session_state[f"fb_{message_idx}"]
-                    
-                    # Log to Supabase
                     supabase = get_supabase_client()
                     
-                    # Find the user's question (it's the message right before the assistant's)
                     user_query = st.session_state.chat_history[message_idx - 1]["content"]
                     ai_response = st.session_state.chat_history[message_idx]["content"]
                     
@@ -185,7 +161,6 @@ def render_chat_history():
                         
                     st.toast("Thank you for your feedback!" if val == 1 else "Thanks, we will improve this.", icon="✅")
 
-                # Streamlit's native beautiful feedback widget!
                 st.feedback("thumbs", key=f"fb_{idx}", on_change=log_feedback, args=[idx])
 
 

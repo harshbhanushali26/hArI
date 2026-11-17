@@ -159,7 +159,10 @@ def summarize() -> str:
             ],
             max_tokens=MAX_SUMMARY_TOKENS
         )
-        return response.choices[0].message.content.strip()
+        # return response.choices[0].message.content.strip()
+        from core.utils import strip_thinking
+        raw_summary = response.choices[0].message.content or ""
+        return strip_thinking(raw_summary).strip()
 
     except Exception as e:
         raise RuntimeError(f"Groq summarization failed: {e}")

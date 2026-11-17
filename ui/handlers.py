@@ -4,9 +4,9 @@ ui/handlers.py
 Business logic handlers for file ingestion and query pipelines.
 
 Responsibilities:
-    - Ingest uploaded files into ChromaDB or session dataframes
-    - Route queries to PDF (RAG) or CSV (pandas) pipeline
-    - Manage session reset including ChromaDB reinitialization
+    - Ingest uploaded files into Supabase pgvector or session dataframes
+    - Route queries to PDF (hybrid RAG) or CSV (DuckDB SQL) pipeline
+    - Manage session reset including vector store reinitialization
     - Remove individual files from session and vector store
 """
 
@@ -33,13 +33,13 @@ from rag.retriever import RAGRetriever
 from ui.state import clear_chat
 
 
-from config import GROQ_API_KEY, ANALYSIS_MODEL, SCORE_THRESHOLD, TITLE_MODEL
+from config import GROQ_API_KEY, ANALYSIS_MODEL, TITLE_MODEL
 
 
 def ingest_file(file):
     """
     Processes a single uploaded file and indexes it.
-    PDF      -> chunks -> embeddings -> ChromaDB
+    PDF      -> chunks -> embeddings -> Supabase pgvector
     CSV/Excel -> DataFrame -> session state
     """
     try:
@@ -81,7 +81,7 @@ def run_pdf_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     Returns (response_string, sources_string)
     """
     # retrieve top-k chunks
-    chunks = st.session_state.retriever.retrieve(query, score_threshold=SCORE_THRESHOLD)
+    chunks = st.session_state.retriever.retrieve(query)
 
     # early return if no relevant chunks found
     if not chunks:
@@ -106,7 +106,7 @@ def run_pdf_pipeline(query: str, placeholder=None) -> tuple[str, str]:
 
 
 def reset_session():
-    """Full reset — clears everything including indexed files and ChromaDB."""
+    """Full reset — clears everything including indexed files and vector store."""
     clear_chat()
     st.session_state.uploaded_files  = []
     st.session_state.processed_files = set()
@@ -120,7 +120,7 @@ def reset_session():
 
 
 def remove_file(filename: str):
-    """Removes a file from session state and ChromaDB."""
+    """Removes a file from session state and Supabase pgvector."""
     st.session_state.uploaded_files  = [
         f for f in st.session_state.uploaded_files
         if f["filename"] != filename
@@ -209,6 +209,7 @@ def handle_query(query: str, placeholder=None):
 
 
 def _generate_chat_title(query: str) -> str:
+    from core.utils import strip_thinking
     try:
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
@@ -217,10 +218,12 @@ def _generate_chat_title(query: str) -> str:
                 "role": "user",
                 "content": f"Give a 4-5 word title for a conversation starting with: '{query}'. Return ONLY the title, no quotes, no punctuation."
             }],
-            max_tokens=15,
+            max_tokens=150,     # Enough room for reasoning tokens
             temperature=0.3
         )
-        return response.choices[0].message.content.strip()
+        raw_title = response.choices[0].message.content or ""
+        clean_title = strip_thinking(raw_title).strip()
+        return clean_title if clean_title else query[:30]
     except:
         return query[:30] + "..." if len(query) > 30 else query
 
@@ -228,7 +231,7 @@ def _generate_chat_title(query: str) -> str:
 def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     """
     Runs explicitly-registered DuckDB SQL analysis for CSV/Excel queries.
-    Supports MULTIPLE files for cross-table JOINs!
+    Supports MULTIPLE files for cross-table JOINs with case-insensitive matching!
     """
     import duckdb
     import re
@@ -237,8 +240,8 @@ def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     if not st.session_state.dataframes:
         return "No CSV or Excel file loaded in this session.", ""
 
-    # 1. Open an explicit connection
-    con = duckdb.connect()
+    # 1. Open an explicit connection locked down against filesystem/network access
+    con = duckdb.connect(config={"enable_external_access": False})
 
     # 2. Register EVERY loaded file as its own table for cross-file JOINs!
     schema_parts = []
@@ -252,9 +255,11 @@ def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
         # Explicitly register the DataFrame into the connection
         con.register(table_name, df)
         
-        # Build schema block for this specific table
+        # Build schema block WITH sample data preview so the LLM sees the actual casing & format
+        preview_sample = meta.get("preview", [])[:2]
         table_schema = f"Table Name: {table_name}\nColumns:\n"
         table_schema += "\n".join(f"  - {col}: {meta['dtypes'].get(col, '?')}" for col in meta["columns"])
+        table_schema += f"\nSample Data (First 2 Rows):\n{preview_sample}"
         schema_parts.append(table_schema)
 
     combined_schema = "\n\n".join(schema_parts)
@@ -264,7 +269,7 @@ def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     sql_query = ""
     analysis_result = ""
     
-    # The Prompt now dynamically supports multiple tables
+    # Prompt explicitly instructs ILIKE/LOWER for robust case-insensitive matching
     messages = [
         {"role": "system", "content": "You are a senior PostgreSQL and DuckDB expert."},
         {"role": "user", "content": (
@@ -274,17 +279,19 @@ def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
             f"Rules:\n"
             f"- Return ONLY the raw SQL query\n"
             f"- Do NOT wrap it in markdown block quotes\n"
-            f"- Do NOT add any explanations."
+            f"- Do NOT add any explanations\n"
+            f"- ALWAYS use ILIKE or LOWER(...) for all text/string filtering to ensure case-insensitive matching (e.g. ILIKE '%completed%' or LOWER(col) = 'value')\n"
+            f"- Do NOT assume casing in the data — use case-insensitive comparisons."
         )}
     ]
 
     for attempt in range(max_retries):
         try:
             sql_res = client.chat.completions.create(
-                model    = ANALYSIS_MODEL,
-                messages = messages,
-                max_tokens = 500,
-                temperature = 0.1
+                model      = ANALYSIS_MODEL,
+                messages   = messages,
+                max_tokens = 1000,
+                temperature= 0.1
             )
             sql_query = sql_res.choices[0].message.content.strip()
 
@@ -300,7 +307,7 @@ def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
         except Exception as e:
             error_msg = str(e)
             if attempt < max_retries - 1:
-                # Self-heal loop
+                # Self-heal loop: feed error and previous broken SQL back to the model
                 messages.append({"role": "assistant", "content": sql_query})
                 messages.append({"role": "user", "content": f"That SQL failed with this error: {error_msg}\nFix the SQL and return ONLY the corrected SQL query."})
             else:
@@ -309,31 +316,27 @@ def run_csv_pipeline(query: str, placeholder=None) -> tuple[str, str]:
     # Close the connection to free memory
     con.close()
 
-    # Pass result to LLM for final formatting
-    # Note: We just pass the first file's meta for basic context, but analysis_result is what matters
-    first_fname = list(st.session_state.dataframes.keys())[0]
-    _, first_meta = st.session_state.dataframes[first_fname]
+    # Pass all active file schemas and the DuckDB analysis result to the response LLM
+    all_metadata = [meta for _, meta in st.session_state.dataframes.values()]
     
     context = {
-        "metadata"       : first_meta,
+        "metadata"       : all_metadata,
         "analysis_result": analysis_result
     }
 
     from core.responser import get_response
     response = get_response(
-        query    = query,
-        intent   = "csv",
-        context  = context,
-        memory   = get_context(),
-        sections = st.session_state.prompt_sections,
+        query       = query,
+        intent      = "csv",
+        context     = context,
+        memory      = get_context(),
+        sections    = st.session_state.prompt_sections,
         placeholder = placeholder
     )
 
     from core.utils import strip_thinking
     response = strip_thinking(response)
     
-    # Sources now shows all files that were queried!
+    # Sources shows only the queried files cleanly:
     sources = " | ".join(file_names)
     return response, sources
-
-

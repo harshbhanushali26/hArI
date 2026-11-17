@@ -181,9 +181,9 @@ def _build_pdf_user_message(query: str, context: list) -> str:
     context_str = "\n\n".join(chunks)
 
     return (
-        f"Context from uploaded documents:\n\n"
-        f"{context_str}\n\n"
-        f"---\n"
+        f"<context>\n"
+        f"{context_str}\n"
+        f"</context>\n\n"
         f"User Query: {query}"
     )
 
@@ -191,36 +191,54 @@ def _build_pdf_user_message(query: str, context: list) -> str:
 def _build_csv_user_message(query: str, context: dict) -> str:
     """
     Builds user message for CSV mode with injected schema and analysis result.
-
-    Args:
-        query  : user's question string
-        context: dict with keys:
-                    "metadata"        -> df metadata (columns, dtypes, preview, rows)
-                    "analysis_result" -> string result from pandas code execution
-
-    Returns:
-        formatted user message string with schema and result injected
+    Safely unpacks single dict, list of dicts, or (df, meta) tuples.
     """
-    metadata        = context.get("metadata", {})
     analysis_result = context.get("analysis_result", "No result available.")
 
-    filename = metadata.get("source", "unknown")
-    rows     = metadata.get("rows", "?")
-    columns  = metadata.get("columns", [])
-    dtypes   = metadata.get("dtypes", {})
-    preview  = metadata.get("preview", [])
+    raw_meta = context.get("metadata_list") or context.get("metadata") or []
+    
+    # Wrap single dict in a list
+    if isinstance(raw_meta, dict):
+        raw_meta = [raw_meta]
 
-    schema_str  = "\n".join(f"  - {col}: {dtypes.get(col, '?')}" for col in columns)
-    preview_str = "\n".join(str(row) for row in preview)
+    # Bulletproof unpacking: ensure every item in clean_meta_list is a dict
+    clean_meta_list = []
+    for item in raw_meta:
+        if isinstance(item, dict):
+            clean_meta_list.append(item)
+        elif isinstance(item, (list, tuple)):
+            # If (df, meta) was passed, grab the dict part
+            for sub_item in item:
+                if isinstance(sub_item, dict):
+                    clean_meta_list.append(sub_item)
+
+    file_blocks = []
+    for meta in clean_meta_list:
+        filename = meta.get("source", "unknown")
+        rows     = meta.get("rows", "?")
+        columns  = meta.get("columns", [])
+        dtypes   = meta.get("dtypes", {})
+        preview  = meta.get("preview", [])
+
+        schema_str  = "\n".join(f"  - {col}: {dtypes.get(col, '?')}" for col in columns)
+        preview_str = "\n".join(str(row) for row in preview)
+
+        file_blocks.append(
+            f"Table: {filename} ({rows} rows)\n"
+            f"Columns:\n{schema_str}\n\n"
+            f"Preview (first 3 rows):\n{preview_str}"
+        )
+
+    all_files_str = "\n\n---\n\n".join(file_blocks) if file_blocks else "No schema available."
 
     return (
-        f"File: {filename} ({rows} rows)\n\n"
-        f"Schema:\n{schema_str}\n\n"
-        f"Preview (first 3 rows):\n{preview_str}\n\n"
+        f"<tabular_data>\n"
+        f"Uploaded Tables:\n\n{all_files_str}\n\n"
         f"Analysis Result:\n{analysis_result}\n\n"
-        f"---\n"
+        f"</tabular_data>\n\n"
         f"User Query: {query}"
     )
+
 
 
 # ── Master Entry Point ────────────────────────────────────────────────────────

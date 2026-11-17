@@ -64,49 +64,49 @@ def query_classifier(files) -> str:
 
 # ── LLM Intent Classifier ─────────────────────────────────────────────────────
 
-def llm_intent_classifier(query: str) -> str:
+def llm_intent_classifier(files, query: str) -> str:
     """
-    Uses INTENT_MODEL to classify query as "pdf" or "csv".
-    Only called when both file types are present in session.
-
-    Args:
-        query: user's question string
-
-    Returns:
-        "pdf" or "csv"
-
-    Raises:
-        RuntimeError if Groq API call fails
+    Uses INTENT_MODEL to classify query as 'pdf' or 'csv'.
+    Passes uploaded filenames so the reasoning model understands context.
     """
+    from core.utils import strip_thinking
+    
+    # 1. Provide the actual filenames uploaded in this session
+    pdf_files = [f["filename"] for f in files if f.get("file_type") == "pdf"]
+    csv_files = [f["filename"] for f in files if f.get("file_type") in ["csv", "excel"]]
+    
+    file_manifest = f"PDF files: {', '.join(pdf_files)}\nSpreadsheet/CSV files: {', '.join(csv_files)}"
+
     try:
-        client   = get_groq_client()
+        client = get_groq_client()
         response = client.chat.completions.create(
             model=INTENT_MODEL,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are an intent classifier. "
-                        "The user has uploaded both PDF documents and CSV/Excel files. "
+                        "You are an intent classifier. The user has uploaded both PDF documents and CSV/Excel files.\n\n"
+                        f"{file_manifest}\n\n"
                         "Classify whether the user's query is about the PDF documents "
-                        "or the CSV/Excel data. "
+                        "or the CSV/Excel tabular data.\n"
                         "Reply with ONE word only: 'pdf' or 'csv'."
                     )
                 },
                 {
                     "role": "user",
-                    "content": f"Classify this query:\n\n{query}"
+                    "content": f"Query: {query}"
                 }
             ],
-            max_tokens=5   # one word response only
+            max_tokens=150,    # Room for <think>...</think> + output word
+            temperature=0.0
         )
 
-        intent = response.choices[0].message.content.strip().lower()
+        raw = response.choices[0].message.content or ""
+        intent = strip_thinking(raw).strip().lower()
 
-        # safety guard — LLM might return "csv file" or "PDF" etc.
-        if "csv" in intent or "excel" in intent or "data" in intent:
+        if "csv" in intent or "excel" in intent or "data" in intent or "table" in intent:
             return "csv"
-        return "pdf"  # default to pdf if unclear
+        return "pdf"
 
     except Exception as e:
         raise RuntimeError(f"Groq intent classification failed: {e}")
@@ -138,6 +138,6 @@ def get_intent(files, query: str) -> str:
         return result
 
     try:
-        return llm_intent_classifier(query)
+        return llm_intent_classifier(files, query)
     except RuntimeError:
         return "pdf"  # safe fallback — PDF RAG safer than failed code exec
