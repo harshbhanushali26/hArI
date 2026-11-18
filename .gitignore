@@ -14,3 +14,5 @@ wheels/
 chroma_store/
 
 .streamlit/secrets.toml
+
+.pytest_cache/
